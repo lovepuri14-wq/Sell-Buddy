@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SellBuddy — Shop</title><link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar"><a class="brand" href="/">SellBuddy<span>.</span></a><nav><a href="/">Shop</a><a href="/admin/login">Seller Admin</a></nav></header>
+<section class="hero"><div><p class="eyebrow">YOUR EVERYDAY STORE</p><h1>Find your next<br><span>favourite thing.</span></h1><p>Discover useful products at prices you'll love.</p></div><div class="hero-mark">SB</div></section>
+<main class="wrap">
+<div class="toolbar"><input id="search" placeholder="Search products..."><select id="category"><option value="">All categories</option></select><span id="count"></span></div>
+<div id="products" class="grid"><p>Loading products…</p></div>
+</main>
+<div id="cartbar" class="cartbar hidden"><div><strong id="cartcount">0 items</strong><span id="carttotal">₹0</span></div><button onclick="openCheckout()">Checkout</button></div>
+<div id="checkout" class="modal hidden"><div class="modal-card"><button class="close" onclick="closeCheckout()">×</button><h2>Delivery details</h2><form id="checkoutform"><label>Full name<input name="customer_name" required></label><label>Phone number<input name="phone" inputmode="tel" required></label><label>Full address<textarea name="address" required rows="3"></textarea></label><p class="muted">Payment method: Cash on Delivery</p><button class="primary" type="submit">Place order</button></form><p id="checkoutmessage"></p></div></div>
+<footer>SellBuddy · Small business, made simple</footer>
+<script>
+let products=[], cart=new Map();
+const rupees=n=>'₹'+Number(n).toLocaleString('en-IN',{maximumFractionDigits:2});
+async function loadProducts(){try{const r=await fetch('/api/products');products=await r.json();const cats=[...new Set(products.map(p=>p.category))].sort();document.getElementById('category').innerHTML='<option value="">All categories</option>'+cats.map(c=>`<option>${esc(c)}</option>`).join('');render();}catch(e){document.getElementById('products').innerHTML='<p>Could not load products. Is the backend running?</p>';}}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function render(){const q=document.getElementById('search').value.toLowerCase(),cat=document.getElementById('category').value;const list=products.filter(p=>p.name.toLowerCase().includes(q)&&(!cat||p.category===cat));document.getElementById('count').textContent=list.length+' products';document.getElementById('products').innerHTML=list.map(p=>`<article class="product"><div class="photo">${p.image_url?`<img src="${esc(p.image_url)}" alt="${esc(p.name)}" onerror="this.style.display='none'">`:'<span>SellBuddy</span>'}</div><div class="product-info"><small>${esc(p.category)}</small><h3>${esc(p.name)}</h3><p>${esc(p.description)}</p><div class="buyrow"><strong>${rupees(p.price)}</strong><button ${p.stock<=0?'disabled':''} onclick="add(${p.id})">${p.stock<=0?'Sold out':'Add +'}</button></div><small>${p.stock} in stock</small></div></article>`).join('')||'<p>No products found.</p>';}
+function add(id){const p=products.find(x=>x.id===id);if(!p)return;const current=cart.get(id)?.quantity||0;if(current>=p.stock){alert('No more stock available.');return;}cart.set(id,{product:p,quantity:current+1});updateCart();}
+function updateCart(){let count=0,total=0;for(const x of cart.values()){count+=x.quantity;total+=x.product.price*x.quantity;}document.getElementById('cartbar').classList.toggle('hidden',count===0);document.getElementById('cartcount').textContent=count+' item'+(count===1?'':'s');document.getElementById('carttotal').textContent=rupees(total);}
+function openCheckout(){document.getElementById('checkout').classList.remove('hidden');document.getElementById('checkoutmessage').textContent='';}
+function closeCheckout(){document.getElementById('checkout').classList.add('hidden');}
+document.getElementById('search').addEventListener('input',render);document.getElementById('category').addEventListener('change',render);
+document.getElementById('checkoutform').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);const payload={customer_name:f.get('customer_name'),phone:f.get('phone'),address:f.get('address'),items:[...cart.entries()].map(([product_id,x])=>({product_id,quantity:x.quantity}))};const msg=document.getElementById('checkoutmessage');msg.textContent='Placing order…';try{const r=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const data=await r.json();if(!r.ok)throw new Error(data.error||'Could not place order');msg.innerHTML=`<strong>Order #${data.order_id} placed!</strong><br>Total: ${rupees(data.total)}<br>Save your order number to check status.`;cart.clear();updateCart();await loadProducts();e.target.reset();}catch(err){msg.textContent=err.message;}});
+loadProducts();
+</script>
+</body></html>

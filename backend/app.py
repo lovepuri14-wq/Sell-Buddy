@@ -1,0 +1,1095 @@
+
+import os
+import sqlite3
+import secrets
+import hashlib
+import re
+from datetime import datetime, timedelta, timezone
+from functools import wraps
+from pathlib import Path
+
+from flask import (
+    Flask, jsonify, request, session,
+    redirect, url_for, render_template, flash
+)
+from flask_cors import CORS
+from werkzeug.security import generate_password_hash, check_password_hash
+
+
+# ==========================================
+# SELLBUDDY BACKEND CONFIGURATION
+# ==========================================
+
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "sellbuddy.db"
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
+app = Flask(
+    __name__,
+    template_folder="templates",
+    static_folder="static"
+)
+
+app.secret_key = os.environ.get(
+    "SELLBUDDY_SECRET",
+    "change-this-secret-before-public-launch"
+)
+
+CORS(app)
+
+ADMIN_USERNAME = os.environ.get(
+    "SELLBUDDY_ADMIN_USER", "admin"
+)
+
+ADMIN_PASSWORD = os.environ.get(
+    "SELLBUDDY_ADMIN_PASSWORD", "ChangeMe123!"
+)
+
+
+# ==========================================
+# DATABASE CONNECTION
+# ==========================================
+
+def db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+# ==========================================
+# DATABASE INITIALIZATION
+# ==========================================
+
+def init_db():
+    with db() as con:
+        con.executescript("""
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            category TEXT NOT NULL DEFAULT 'Other',
+            price REAL NOT NULL CHECK(price >= 0),
+            stock INTEGER NOT NULL DEFAULT 0 CHECK(stock >= 0),
+            image_url TEXT NOT NULL DEFAULT '',
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_name TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            address TEXT NOT NULL,
+            total REAL NOT NULL,
+            payment_method TEXT NOT NULL DEFAULT 'COD',
+            status TEXT NOT NULL DEFAULT 'Order Placed',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS order_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL
+                REFERENCES orders(id) ON DELETE CASCADE,
+            product_id INTEGER,
+            product_name TEXT NOT NULL,
+            price REAL NOT NULL,
+            quantity INTEGER NOT NULL,
+            FOREIGN KEY(product_id)
+                REFERENCES products(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS customers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS customer_sessions (
+            token_hash TEXT PRIMARY KEY,
+            customer_id INTEGER NOT NULL
+                REFERENCES customers(id) ON DELETE CASCADE,
+            expires_at TEXT NOT NULL
+        );
+        """)
+
+        count = con.execute(
+            "SELECT COUNT(*) FROM products"
+        ).fetchone()[0]
+
+        if count == 0:
+            demo = [
+                (
+                    "Wireless Headphones",
+                    "Comfortable wireless headphones for everyday listening.",
+                    "Electronics",
+                    799,
+                    20,
+                    "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=900"
+                ),
+                (
+                    "Smart Watch",
+                    "A modern watch for everyday use.",
+                    "Electronics",
+                    1299,
+                    15,
+                    "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=900"
+                ),
+                (
+                    "Everyday Backpack",
+                    "A durable backpack for college and travel.",
+                    "Fashion",
+                    599,
+                    30,
+                    "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=900"
+                ),
+                (
+                    "Running Shoes",
+                    "Lightweight shoes for daily walks.",
+                    "Fashion",
+                    1499,
+                    12,
+                    "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=900"
+                )
+            ]
+
+            con.executemany(
+                """
+                INSERT INTO products(
+                    name, description, category,
+                    price, stock, image_url
+                )
+                VALUES(?,?,?,?,?,?)
+                """,
+                demo
+            )
+
+
+# ==========================================
+# HELPER FUNCTIONS
+# ==========================================
+
+def product_dict(row):
+    return dict(row)
+
+
+def admin_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not session.get("admin_logged_in"):
+            return redirect(url_for("admin_login"))
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+# ==========================================
+# CUSTOMER AUTHENTICATION HELPERS
+# ==========================================
+
+def customer_public(row):
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "phone": row["phone"],
+        "email": row["email"]
+    }
+
+
+def create_customer_token(con, customer_id):
+    token = secrets.token_urlsafe(32)
+
+    digest = hashlib.sha256(
+        token.encode("utf-8")
+    ).hexdigest()
+
+    expires = (
+        datetime.now(timezone.utc) + timedelta(days=7)
+    ).isoformat()
+
+    con.execute(
+        """
+        INSERT INTO customer_sessions(
+            token_hash, customer_id, expires_at
+        )
+        VALUES(?,?,?)
+        """,
+        (digest, customer_id, expires)
+    )
+
+    return token
+
+
+def authenticated_customer(con):
+    header = request.headers.get("Authorization", "")
+
+    if not header.startswith("Bearer "):
+        return None
+
+    token = header[7:].strip()
+
+    if not token:
+        return None
+
+    digest = hashlib.sha256(
+        token.encode("utf-8")
+    ).hexdigest()
+
+    row = con.execute(
+        """
+        SELECT c.*, s.expires_at
+        FROM customers c
+        JOIN customer_sessions s
+            ON s.customer_id = c.id
+        WHERE s.token_hash = ?
+        """,
+        (digest,)
+    ).fetchone()
+
+    if not row:
+        return None
+
+    if datetime.fromisoformat(
+        row["expires_at"]
+    ) <= datetime.now(timezone.utc):
+
+        con.execute(
+            "DELETE FROM customer_sessions WHERE token_hash=?",
+            (digest,)
+        )
+
+        return None
+
+    return row
+
+
+# ==========================================
+# CUSTOMER SIGNUP API
+# ==========================================
+
+@app.post("/api/auth/signup")
+def customer_signup():
+    data = request.get_json(silent=True) or {}
+
+    if not isinstance(data, dict):
+        return jsonify({
+            "error": "Invalid request."
+        }), 400
+
+    name = str(data.get("name", "")).strip()
+    phone = str(data.get("phone", "")).strip()
+    email = str(data.get("email", "")).strip().lower()
+    password = data.get("password", "")
+
+    if (
+        not name
+        or len(name) > 100
+        or not re.fullmatch(r"[0-9+() -]{8,20}", phone)
+    ):
+        return jsonify({
+            "error": "Enter a valid name and phone number."
+        }), 400
+
+    if (
+        len(email) > 254
+        or not re.fullmatch(
+            r"[^\s@]+@[^\s@]+\.[^\s@]+",
+            email
+        )
+    ):
+        return jsonify({
+            "error": "Enter a valid email address."
+        }), 400
+
+    if (
+        not isinstance(password, str)
+        or not (8 <= len(password) <= 128)
+    ):
+        return jsonify({
+            "error": "Password must be 8 to 128 characters."
+        }), 400
+
+    try:
+        with db() as con:
+            cursor = con.execute(
+                """
+                INSERT INTO customers(
+                    name, phone, email, password_hash
+                )
+                VALUES(?,?,?,?)
+                """,
+                (
+                    name,
+                    phone,
+                    email,
+                    generate_password_hash(password)
+                )
+            )
+
+            customer = con.execute(
+                "SELECT * FROM customers WHERE id=?",
+                (cursor.lastrowid,)
+            ).fetchone()
+
+            token = create_customer_token(
+                con,
+                customer["id"]
+            )
+
+    except sqlite3.IntegrityError:
+        return jsonify({
+            "error": "An account with this email already exists."
+        }), 409
+
+    return jsonify({
+        "message": "Account created",
+        "customer": customer_public(customer),
+        "token": token
+    }), 201
+
+
+# ==========================================
+# CUSTOMER LOGIN API
+# ==========================================
+
+@app.post("/api/auth/login")
+def customer_login():
+    data = request.get_json(silent=True) or {}
+
+    if not isinstance(data, dict):
+        return jsonify({
+            "error": "Invalid request."
+        }), 400
+
+    email = str(
+        data.get("email", "")
+    ).strip().lower()
+
+    password = data.get("password", "")
+
+    if not isinstance(password, str):
+        return jsonify({
+            "error": "Invalid email or password."
+        }), 401
+
+    with db() as con:
+        customer = con.execute(
+            "SELECT * FROM customers WHERE email=?",
+            (email,)
+        ).fetchone()
+
+        if (
+            not customer
+            or not check_password_hash(
+                customer["password_hash"],
+                password
+            )
+        ):
+            return jsonify({
+                "error": "Invalid email or password."
+            }), 401
+
+        token = create_customer_token(
+            con,
+            customer["id"]
+        )
+
+    return jsonify({
+        "message": "Logged in",
+        "customer": customer_public(customer),
+        "token": token
+    })
+
+
+# ==========================================
+# CUSTOMER PROFILE API
+# ==========================================
+
+@app.get("/api/auth/me")
+def customer_me():
+    with db() as con:
+        customer = authenticated_customer(con)
+
+    if not customer:
+        return jsonify({
+            "error": "Please log in."
+        }), 401
+
+    return jsonify({
+        "customer": customer_public(customer)
+    })
+
+
+# ==========================================
+# CUSTOMER LOGOUT API
+# ==========================================
+
+@app.post("/api/auth/logout")
+def customer_logout():
+    header = request.headers.get(
+        "Authorization", ""
+    )
+
+    if header.startswith("Bearer "):
+        digest = hashlib.sha256(
+            header[7:].strip().encode("utf-8")
+        ).hexdigest()
+
+        with db() as con:
+            con.execute(
+                """
+                DELETE FROM customer_sessions
+                WHERE token_hash=?
+                """,
+                (digest,)
+            )
+
+    return jsonify({
+        "message": "Logged out"
+    })
+
+
+# ==========================================
+# HOME PAGE
+# ==========================================
+
+@app.get("/")
+def home():
+    return render_template("shop.html")
+
+
+# ==========================================
+# HEALTH API
+# ==========================================
+
+@app.get("/api/health")
+def health():
+    return jsonify({
+        "app": "SellBuddy",
+        "status": "running"
+    })
+
+
+# ==========================================
+# PRODUCT APIs
+# ==========================================
+
+@app.get("/api/products")
+def get_products():
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT * FROM products
+            WHERE active=1
+            ORDER BY id DESC
+            """
+        ).fetchall()
+
+    return jsonify([
+        product_dict(r) for r in rows
+    ])
+
+
+@app.get("/api/products/<int:product_id>")
+def get_product(product_id):
+    with db() as con:
+        row = con.execute(
+            """
+            SELECT * FROM products
+            WHERE id=? AND active=1
+            """,
+            (product_id,)
+        ).fetchone()
+
+    if not row:
+        return jsonify({
+            "error": "Product not found"
+        }), 404
+
+    return jsonify(product_dict(row))
+
+
+# ==========================================
+# CREATE ORDER API
+# ==========================================
+
+@app.post("/api/orders")
+def create_order():
+    data = request.get_json(silent=True) or {}
+
+    name = str(
+        data.get("customer_name", "")
+    ).strip()
+
+    phone = str(
+        data.get("phone", "")
+    ).strip()
+
+    address = str(
+        data.get("address", "")
+    ).strip()
+
+    items = data.get("items", [])
+
+    if (
+        not name
+        or not phone
+        or not address
+        or not isinstance(items, list)
+        or not items
+    ):
+        return jsonify({
+            "error": (
+                "Name, phone, address and at least "
+                "one item are required."
+            )
+        }), 400
+
+    if len(phone) < 8 or len(phone) > 16:
+        return jsonify({
+            "error": "Please enter a valid phone number."
+        }), 400
+
+    try:
+        with db() as con:
+            customer = authenticated_customer(con)
+
+            if customer is None:
+                return jsonify({
+                    "error": "Please log in to place an order."
+                }), 401
+
+            total = 0.0
+            validated = []
+
+            for item in items:
+                pid = int(item.get("product_id"))
+                qty = int(item.get("quantity", 1))
+
+                if qty < 1 or qty > 100:
+                    return jsonify({
+                        "error": "Quantity must be between 1 and 100."
+                    }), 400
+
+                p = con.execute(
+                    """
+                    SELECT id, name, price, stock
+                    FROM products
+                    WHERE id=? AND active=1
+                    """,
+                    (pid,)
+                ).fetchone()
+
+                if not p:
+                    return jsonify({
+                        "error": f"Product {pid} is unavailable."
+                    }), 400
+
+                if p["stock"] < qty:
+                    return jsonify({
+                        "error": f"Not enough stock for {p['name']}."
+                    }), 400
+
+                total += float(p["price"]) * qty
+                validated.append((p, qty))
+
+            cur = con.execute(
+                """
+                INSERT INTO orders(
+                    customer_name,
+                    phone,
+                    address,
+                    total,
+                    payment_method,
+                    status,
+                    customer_id
+                )
+                VALUES(?,?,?,?,?,?,?)
+                """,
+                (
+                    name,
+                    phone,
+                    address,
+                    round(total, 2),
+                    "Cash on Delivery",
+                    "Order Placed",
+                    customer["id"]
+                )
+            )
+
+            order_id = cur.lastrowid
+
+            for p, qty in validated:
+                con.execute(
+                    """
+                    INSERT INTO order_items(
+                        order_id,
+                        product_id,
+                        product_name,
+                        price,
+                        quantity
+                    )
+                    VALUES(?,?,?,?,?)
+                    """,
+                    (
+                        order_id,
+                        p["id"],
+                        p["name"],
+                        p["price"],
+                        qty
+                    )
+                )
+
+                con.execute(
+                    """
+                    UPDATE products
+                    SET stock=stock-?
+                    WHERE id=?
+                    """,
+                    (qty, p["id"])
+                )
+
+        return jsonify({
+            "message": "Order placed",
+            "order_id": order_id,
+            "total": round(total, 2)
+        }), 201
+
+    except (TypeError, ValueError):
+        return jsonify({
+            "error": "Invalid item data."
+        }), 400
+
+
+# ==========================================
+# ORDER TRACKING API
+# ==========================================
+
+@app.get("/api/orders/<int:order_id>")
+def order_status(order_id):
+    with db() as con:
+        order = con.execute(
+            """
+            SELECT id, status, total, created_at
+            FROM orders
+            WHERE id=?
+            """,
+            (order_id,)
+        ).fetchone()
+
+        if not order:
+            return jsonify({
+                "error": "Order not found"
+            }), 404
+
+        items = con.execute(
+            """
+            SELECT product_name, price, quantity
+            FROM order_items
+            WHERE order_id=?
+            """,
+            (order_id,)
+        ).fetchall()
+
+    result = dict(order)
+    result["items"] = [
+        dict(x) for x in items
+    ]
+
+    return jsonify(result)
+
+
+# ==========================================
+# ADMIN LOGIN
+# ==========================================
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    if request.method == "POST":
+        username = request.form.get(
+            "username", ""
+        )
+
+        password = request.form.get(
+            "password", ""
+        )
+
+        if (
+            username == ADMIN_USERNAME
+            and password == ADMIN_PASSWORD
+        ):
+            session["admin_logged_in"] = True
+            return redirect(
+                url_for("admin_dashboard")
+            )
+
+        flash(
+            "Incorrect username or password.",
+            "error"
+        )
+
+    return render_template("login.html")
+
+
+# ==========================================
+# ADMIN LOGOUT
+# ==========================================
+
+@app.get("/admin/logout")
+def admin_logout():
+    session.pop("admin_logged_in", None)
+
+    return redirect(
+        url_for("admin_login")
+    )
+
+
+# ==========================================
+# ADMIN DASHBOARD
+# ==========================================
+
+@app.get("/admin")
+@admin_required
+def admin_dashboard():
+    with db() as con:
+        products = con.execute(
+            """
+            SELECT * FROM products
+            ORDER BY id DESC
+            """
+        ).fetchall()
+
+        orders = con.execute(
+            """
+            SELECT * FROM orders
+            ORDER BY id DESC
+            LIMIT 100
+            """
+        ).fetchall()
+
+        revenue = con.execute(
+            """
+            SELECT COALESCE(SUM(total),0)
+            FROM orders
+            WHERE status != 'Cancelled'
+            """
+        ).fetchone()[0]
+
+        order_count = con.execute(
+            "SELECT COUNT(*) FROM orders"
+        ).fetchone()[0]
+
+    return render_template(
+        "admin.html",
+        products=products,
+        orders=orders,
+        revenue=revenue,
+        order_count=order_count
+    )
+
+
+# ==========================================
+# ADMIN ADD PRODUCT
+# ==========================================
+
+@app.post("/admin/products/add")
+@admin_required
+def admin_add_product():
+    form = request.form
+
+    name = form.get(
+        "name", ""
+    ).strip()
+
+    description = form.get(
+        "description", ""
+    ).strip()
+
+    category = (
+        form.get("category", "Other").strip()
+        or "Other"
+    )
+
+    image_url = form.get(
+        "image_url", ""
+    ).strip()
+
+    try:
+        price = float(
+            form.get("price", "")
+        )
+
+        stock = int(
+            form.get("stock", "0")
+        )
+
+        if (
+            not name
+            or price < 0
+            or stock < 0
+        ):
+            raise ValueError()
+
+    except ValueError:
+        flash(
+            "Enter a product name, valid price and stock.",
+            "error"
+        )
+
+        return redirect(
+            url_for("admin_dashboard")
+        )
+
+    with db() as con:
+        con.execute(
+            """
+            INSERT INTO products(
+                name,
+                description,
+                category,
+                price,
+                stock,
+                image_url
+            )
+            VALUES(?,?,?,?,?,?)
+            """,
+            (
+                name,
+                description,
+                category,
+                price,
+                stock,
+                image_url
+            )
+        )
+
+    flash(
+        "Product added.",
+        "success"
+    )
+
+    return redirect(
+        url_for("admin_dashboard")
+    )
+
+
+# ==========================================
+# ADMIN UPDATE PRODUCT
+# ==========================================
+
+@app.post("/admin/products/<int:product_id>/update")
+@admin_required
+def admin_update_product(product_id):
+    form = request.form
+
+    try:
+        price = float(
+            form.get("price", "")
+        )
+
+        stock = int(
+            form.get("stock", "")
+        )
+
+        active = (
+            1 if form.get("active") == "on"
+            else 0
+        )
+
+        if price < 0 or stock < 0:
+            raise ValueError()
+
+    except ValueError:
+        flash(
+            "Price and stock must be valid non-negative numbers.",
+            "error"
+        )
+
+        return redirect(
+            url_for("admin_dashboard")
+        )
+
+    with db() as con:
+        con.execute(
+            """
+            UPDATE products
+            SET price=?, stock=?, active=?
+            WHERE id=?
+            """,
+            (
+                price,
+                stock,
+                active,
+                product_id
+            )
+        )
+
+    flash(
+        "Product updated.",
+        "success"
+    )
+
+    return redirect(
+        url_for("admin_dashboard")
+    )
+
+
+# ==========================================
+# ADMIN DELETE PRODUCT
+# ==========================================
+
+@app.post("/admin/products/<int:product_id>/delete")
+@admin_required
+def admin_delete_product(product_id):
+    with db() as con:
+        con.execute(
+            """
+            UPDATE products
+            SET active=0
+            WHERE id=?
+            """,
+            (product_id,)
+        )
+
+    flash(
+        "Product hidden from the shop.",
+        "success"
+    )
+
+    return redirect(
+        url_for("admin_dashboard")
+    )
+
+
+# ==========================================
+# ADMIN UPDATE ORDER STATUS
+# ==========================================
+
+@app.post("/admin/orders/<int:order_id>/status")
+@admin_required
+def admin_update_order(order_id):
+    status = request.form.get(
+        "status", ""
+    )
+
+    allowed = {
+        "Order Placed",
+        "Confirmed",
+        "Packed",
+        "Shipped",
+        "Delivered",
+        "Cancelled"
+    }
+
+    if status not in allowed:
+        flash(
+            "Invalid order status.",
+            "error"
+        )
+
+    else:
+        with db() as con:
+            con.execute(
+                """
+                UPDATE orders
+                SET status=?
+                WHERE id=?
+                """,
+                (status, order_id)
+            )
+
+        flash(
+            "Order status updated.",
+            "success"
+        )
+
+    return redirect(
+        url_for("admin_dashboard")
+    )
+
+
+# ==========================================
+# START SELLBUDDY SERVER
+
+
+# ==========================================
+# SELLBUDDY MY ORDERS
+# ==========================================
+
+@app.get("/api/my-orders")
+def my_orders():
+    with db() as con:
+        customer = authenticated_customer(con)
+
+        if customer is None:
+            return jsonify({
+                "error": "Please log in."
+            }), 401
+
+        columns = [
+            row["name"]
+            for row in con.execute("PRAGMA table_info(orders)")
+        ]
+
+        if "customer_id" not in columns:
+            return jsonify({
+                "error": "Order history database upgrade pending."
+            }), 503
+
+        orders = con.execute(
+            """
+            SELECT id, total, payment_method, status, created_at
+            FROM orders
+            WHERE customer_id=?
+            ORDER BY id DESC
+            """,
+            (customer["id"],)
+        ).fetchall()
+
+        result = []
+
+        for order in orders:
+            entry = dict(order)
+            items = con.execute(
+                """
+                SELECT product_name, price, quantity
+                FROM order_items
+                WHERE order_id=?
+                """,
+                (order["id"],)
+            ).fetchall()
+
+            entry["items"] = [dict(item) for item in items]
+            result.append(entry)
+
+    return jsonify(result)
+
+
+# ==========================================
+
+if __name__ == "__main__":
+    init_db()
+
+    print(
+        "SellBuddy backend starting at "
+        "http://127.0.0.1:5000"
+    )
+
+    print(
+        "Admin panel: "
+        "http://127.0.0.1:5000/admin"
+    )
+
+    app.run(
+        host="0.0.0.0",
+        port=int(
+            os.environ.get("PORT", "5000")
+        ),
+        debug=False
+    )

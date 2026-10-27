@@ -1,0 +1,39 @@
+__pycache__/
+*.pyc
+backend/sellbuddy.db
+mobile/.dart_tool/
+mobile/build/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*.json
+
+# SQLite databases and backups
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.db.bak
+*.bak
+
+# Python virtual environments
+.venv/
+venv/
+
+# Flutter generated files
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDE and system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
