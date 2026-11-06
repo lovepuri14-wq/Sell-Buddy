@@ -921,8 +921,8 @@ def admin_dashboard():
         ).fetchone()["revenue"]
 
         order_count = con.execute(
-            "SELECT COUNT(*) FROM orders"
-        ).fetchone()[0]
+            "SELECT COUNT(*) AS order_count FROM orders"
+        ).fetchone()["order_count"]
 
     return render_template(
         "admin.html",
