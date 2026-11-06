@@ -1,7 +1,7 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+﻿<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="SellBuddy"
+        android:label="Handmade Haven"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true">
@@ -22,3 +22,4 @@
         <meta-data android:name="flutterEmbedding" android:value="2"/>
     </application>
 </manifest>
+

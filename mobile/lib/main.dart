@@ -12,19 +12,19 @@ const String apiBaseUrl = String.fromEnvironment(
 );
 
 void main() {
-  runApp(const SellBuddyApp());
+  runApp(const HandmadeHavenApp());
 }
 
 String money(num amount) => '₹${amount.toStringAsFixed(0)}';
 
-class SellBuddyApp extends StatefulWidget {
-  const SellBuddyApp({super.key});
+class HandmadeHavenApp extends StatefulWidget {
+  const HandmadeHavenApp({super.key});
 
   @override
-  State<SellBuddyApp> createState() => _SellBuddyAppState();
+  State<HandmadeHavenApp> createState() => _HandmadeHavenAppState();
 }
 
-class _SellBuddyAppState extends State<SellBuddyApp> {
+class _HandmadeHavenAppState extends State<HandmadeHavenApp> {
   ThemeMode themeMode = ThemeMode.system;
   Map<String, dynamic>? customer;
   String? token;
@@ -113,7 +113,7 @@ class _SellBuddyAppState extends State<SellBuddyApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'SellBuddy',
+      title: 'Handmade Haven',
       debugShowCheckedModeBanner: false,
       theme: appTheme(Brightness.light),
       darkTheme: appTheme(Brightness.dark),
@@ -253,7 +253,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('SellBuddy Account'),
+        title: const Text('Handmade Haven Account'),
       ),
       body: Center(
         child: SingleChildScrollView(
@@ -291,8 +291,8 @@ class _AuthScreenState extends State<AuthScreen> {
                       const SizedBox(height: 8),
                       Text(
                         signup
-                            ? 'Join SellBuddy and start shopping.'
-                            : 'Log in to your SellBuddy account.',
+                            ? 'Join Handmade Haven and start shopping.'
+                            : 'Log in to your Handmade Haven account.',
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 28),
@@ -533,7 +533,7 @@ class _ShopScreenState extends State<ShopScreen> {
       if (!mounted) return;
 
       setState(() {
-        error = 'Cannot connect to SellBuddy server.\n$e';
+        error = 'Cannot connect to Handmade Haven server.\n$e';
         loading = false;
       });
     }
@@ -554,7 +554,7 @@ class _ShopScreenState extends State<ShopScreen> {
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Welcome to SellBuddy!'),
+            content: Text('Welcome to Handmade Haven!'),
           ),
         );
       }
@@ -650,7 +650,7 @@ class _ShopScreenState extends State<ShopScreen> {
             ),
             SizedBox(width: 10),
             Text(
-              'SellBuddy',
+              'Handmade Haven',
               style: TextStyle(
                 fontWeight: FontWeight.w900,
                 fontSize: 23,

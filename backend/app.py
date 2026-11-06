@@ -471,7 +471,7 @@ def home():
 @app.get("/api/health")
 def health():
     return jsonify({
-        "app": "SellBuddy",
+        "app": "Handmade Haven",
         "status": "running"
     })
 
@@ -1077,7 +1077,7 @@ if __name__ == "__main__":
     init_db()
 
     print(
-        "SellBuddy backend starting at "
+        "Handmade Haven backend starting at "
         "http://127.0.0.1:5000"
     )
 

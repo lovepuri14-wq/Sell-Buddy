@@ -1,5 +1,5 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SellBuddy Admin</title><link rel="stylesheet" href="/static/style.css"></head><body>
-<header class="topbar"><a class="brand" href="/">SellBuddy<span>.</span> <small>ADMIN</small></a><nav><a href="/">View shop</a><a href="/admin/logout">Log out</a></nav></header>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Handmade Haven Admin</title><link rel="stylesheet" href="/static/style.css"></head><body>
+<header class="topbar"><a class="brand" href="/">Handmade Haven<span>.</span> <small>ADMIN</small></a><nav><a href="/">View shop</a><a href="/admin/logout">Log out</a></nav></header>
 <main class="wrap admin-wrap"><div class="admin-head"><div><p class="eyebrow">SELLER WORKSPACE</p><h1>Business dashboard</h1><p class="muted">Manage your own products and incoming orders.</p></div></div>
 {% with messages = get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<p class="notice {{category}}">{{message}}</p>{% endfor %}{% endwith %}
 <div class="stats"><div class="stat"><span>Products</span><strong>{{products|length}}</strong></div><div class="stat"><span>Orders</span><strong>{{order_count}}</strong></div><div class="stat"><span>Order value*</span><strong>₹{{'%.2f'|format(revenue)}}</strong></div></div><p class="muted small">*Sum of orders excluding cancelled orders; this is not verified/settled payment revenue.</p>
@@ -11,4 +11,4 @@
 <section class="panel"><h2>Customer orders</h2>{% if orders %}<div class="table-scroll"><table><thead><tr><th>Order</th><th>Customer</th><th>Delivery details</th><th>Total</th><th>Status</th><th>Update</th></tr></thead><tbody>
 {% for o in orders %}<tr><td>#{{o['id']}}<small>{{o['created_at']}}</small></td><td>{{o['customer_name']}}<small>{{o['phone']}}</small></td><td>{{o['address']}}</td><td>₹{{'%.2f'|format(o['total'])}}<small>{{o['payment_method']}}</small></td><td>{{o['status']}}</td><td><form class="status-form" method="post" action="/admin/orders/{{o['id']}}/status"><select name="status">{% for s in ['Order Placed','Confirmed','Packed','Shipped','Delivered','Cancelled'] %}<option {% if o['status']==s %}selected{% endif %}>{{s}}</option>{% endfor %}</select><button class="mini" type="submit">Update</button></form></td></tr>{% endfor %}
 </tbody></table></div>{% else %}<p class="muted">No orders yet. Orders from the shop will appear here.</p>{% endif %}</section>
-</main><footer>SellBuddy Admin · Keep customer information private.</footer></body></html>
+</main><footer>Handmade Haven Admin · Keep customer information private.</footer></body></html>
