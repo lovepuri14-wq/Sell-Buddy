@@ -102,6 +102,10 @@ class DatabaseConnection:
     def executemany(self, sql, params):
         if self.is_postgres:
             sql = sql.replace("?", "%s")
+        if self.is_postgres:
+            cursor = self.connection.cursor()
+            cursor.executemany(sql, params)
+            return cursor
         return self.connection.executemany(sql, params)
 
 
